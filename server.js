@@ -10,21 +10,11 @@ const { Rcon } = require("rcon-client");
 const app = express();
 
 /* ===============================
-   CORS + JSON
+   CONFIG BÁSICA
 =============================== */
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-
+app.use(cors());
 app.use(express.json());
 
-/* ===============================
-   ROTAS BÁSICAS
-=============================== */
 app.get("/", (req, res) => {
   res.send("Backend CobbleBode online 🚀");
 });
@@ -39,13 +29,13 @@ app.get("/health", (req, res) => {
 const PORT = process.env.PORT || 10000;
 
 /* ===============================
-   SQLITE
+   BANCO SQLITE
 =============================== */
 const db = new sqlite3.Database("./db.sqlite", (err) => {
   if (err) {
-    console.error("Erro ao abrir SQLite:", err.message);
+    console.error("❌ Erro ao abrir SQLite:", err.message);
   } else {
-    console.log("Banco SQLite conectado com sucesso");
+    console.log("✅ Banco SQLite conectado com sucesso");
   }
 });
 
@@ -70,10 +60,10 @@ async function sendRconCommand(command) {
     const response = await rcon.send(command);
     await rcon.end();
 
-    console.log("RCON executado:", command);
+    console.log("🎮 RCON executado:", command);
     return response;
   } catch (error) {
-    console.error("Erro RCON:", error);
+    console.error("❌ Erro RCON:", error.message);
   }
 }
 
@@ -86,7 +76,7 @@ app.get("/api/shop", (req, res) => {
     [],
     (err, rows) => {
       if (err) {
-        console.error(err);
+        console.error("Erro ao buscar shop:", err);
         return res.status(500).json({ error: err.message });
       }
       res.json(rows);
@@ -124,19 +114,22 @@ app.post("/api/payments/create", async (req, res) => {
           [playerName, productType, productId, "pending"],
           async function (err) {
             if (err) {
-              console.error(err);
+              console.error("Erro ao criar pedido:", err);
               return res.status(500).json({ error: "Erro ao criar pedido" });
             }
 
             const orderId = this.lastID;
 
             const payment = new Payment(mpClient);
+
             const mpResponse = await payment.create({
               body: {
                 transaction_amount: Number(product.price),
                 description: product.name,
                 payment_method_id: "pix",
-                payer: { email: playerEmail },
+                payer: {
+                  email: playerEmail,
+                },
                 metadata: {
                   order_id: orderId,
                   player: playerName,
@@ -161,42 +154,54 @@ app.post("/api/payments/create", async (req, res) => {
       }
     );
   } catch (error) {
-    console.error("Erro ao criar pagamento:", error);
+    console.error("❌ Erro ao criar pagamento PIX:", error);
     res.status(500).json({ error: "Erro ao criar pagamento PIX" });
   }
 });
 
 /* ===============================
-   WEBHOOK MERCADO PAGO
+   WEBHOOK MERCADO PAGO (FINAL / SEGURO)
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
-  try {
-    console.log("🔥 WEBHOOK RECEBIDO:", JSON.stringify(req.body, null, 2));
+  console.log("🔔 Webhook Mercado Pago recebido:");
+  console.log(JSON.stringify(req.body, null, 2));
 
+  try {
     const paymentId = req.body?.data?.id;
+
     if (!paymentId) {
-      console.log("Webhook sem paymentId");
+      console.log("⚠️ Webhook sem paymentId, ignorando");
       return res.sendStatus(200);
     }
 
     const payment = new Payment(mpClient);
-    const mpPayment = await payment.get({ id: paymentId });
 
-    console.log("📦 PAGAMENTO:", {
+    let mpPayment;
+    try {
+      mpPayment = await payment.get({ id: paymentId });
+    } catch (err) {
+      console.error("⚠️ Erro ao buscar pagamento no MP (simulação ou inválido):");
+      console.error(err.message);
+      // SEMPRE responder 200
+      return res.sendStatus(200);
+    }
+
+    console.log("💰 Pagamento encontrado:", {
       id: mpPayment.id,
       status: mpPayment.status,
       metadata: mpPayment.metadata,
     });
 
     if (mpPayment.status !== "approved") {
+      console.log("⏳ Pagamento ainda não aprovado");
       return res.sendStatus(200);
     }
 
     const { order_id, player, product_type, product_id } =
-      mpPayment.metadata;
+      mpPayment.metadata || {};
 
     if (!order_id || !player) {
-      console.error("Metadata incompleta");
+      console.error("❌ Metadata incompleta");
       return res.sendStatus(200);
     }
 
@@ -206,9 +211,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
     );
 
     if (product_type === "shop") {
-      await sendRconCommand(
-        `give ${player} minecraft:diamond 1`
-      );
+      await sendRconCommand(`give ${player} minecraft:diamond 1`);
       console.log(`💎 Diamante entregue para ${player}`);
     }
 
@@ -228,10 +231,10 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
       );
     }
 
-    res.sendStatus(200);
+    return res.sendStatus(200);
   } catch (error) {
-    console.error("Erro no webhook:", error);
-    res.sendStatus(500);
+    console.error("🔥 Erro inesperado no webhook:", error);
+    return res.sendStatus(200);
   }
 });
 
@@ -239,5 +242,5 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
    START
 =============================== */
 app.listen(PORT, () => {
-  console.log(`Backend CobbleBode rodando na porta ${PORT}`);
+  console.log(`🚀 Backend CobbleBode rodando na porta ${PORT}`);
 });
