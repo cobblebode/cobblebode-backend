@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
-const axios = require("axios");
 
 const { MercadoPagoConfig, Payment } = require("mercadopago");
 const { Rcon } = require("rcon-client");
@@ -11,16 +10,21 @@ const { Rcon } = require("rcon-client");
 const app = express();
 
 /* ===============================
-   CONFIG BÁSICA
+   CORS + JSON
 =============================== */
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
 app.use(express.json());
 
+/* ===============================
+   ROTAS BÁSICAS
+=============================== */
 app.get("/", (req, res) => {
   res.send("Backend CobbleBode online 🚀");
 });
@@ -30,7 +34,7 @@ app.get("/health", (req, res) => {
 });
 
 /* ===============================
-   PORTA
+   PORTA (RENDER)
 =============================== */
 const PORT = process.env.PORT || 10000;
 
@@ -81,7 +85,10 @@ app.get("/api/shop", (req, res) => {
     "SELECT * FROM shop_items WHERE is_active = 1",
     [],
     (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: err.message });
+      }
       res.json(rows);
     }
   );
@@ -112,9 +119,9 @@ app.post("/api/payments/create", async (req, res) => {
         db.run(
           `
           INSERT INTO orders (player, product_type, product_id, status)
-          VALUES (?, ?, ?, 'pending')
+          VALUES (?, ?, ?, ?)
           `,
-          [playerName, productType, productId],
+          [playerName, productType, productId, "pending"],
           async function (err) {
             if (err) {
               console.error(err);
@@ -126,7 +133,7 @@ app.post("/api/payments/create", async (req, res) => {
             const payment = new Payment(mpClient);
             const mpResponse = await payment.create({
               body: {
-                transaction_amount: product.price,
+                transaction_amount: Number(product.price),
                 description: product.name,
                 payment_method_id: "pix",
                 payer: { email: playerEmail },
@@ -154,7 +161,7 @@ app.post("/api/payments/create", async (req, res) => {
       }
     );
   } catch (error) {
-    console.error("Erro ao criar pagamento PIX:", error);
+    console.error("Erro ao criar pagamento:", error);
     res.status(500).json({ error: "Erro ao criar pagamento PIX" });
   }
 });
@@ -164,43 +171,59 @@ app.post("/api/payments/create", async (req, res) => {
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
   try {
-    console.log("Webhook recebido:", req.body);
+    console.log("🔥 WEBHOOK RECEBIDO:", JSON.stringify(req.body, null, 2));
 
     const paymentId = req.body?.data?.id;
-    if (!paymentId) return res.sendStatus(200);
+    if (!paymentId) {
+      console.log("Webhook sem paymentId");
+      return res.sendStatus(200);
+    }
 
     const payment = new Payment(mpClient);
     const mpPayment = await payment.get({ id: paymentId });
 
-    console.log("Pagamento status:", mpPayment.status);
+    console.log("📦 PAGAMENTO:", {
+      id: mpPayment.id,
+      status: mpPayment.status,
+      metadata: mpPayment.metadata,
+    });
 
-    if (mpPayment.status !== "approved") return res.sendStatus(200);
+    if (mpPayment.status !== "approved") {
+      return res.sendStatus(200);
+    }
 
-    const { order_id, player, product_type, product_id } = mpPayment.metadata;
+    const { order_id, player, product_type, product_id } =
+      mpPayment.metadata;
+
+    if (!order_id || !player) {
+      console.error("Metadata incompleta");
+      return res.sendStatus(200);
+    }
 
     db.run(
       "UPDATE orders SET status = 'approved' WHERE id = ?",
       [order_id]
     );
 
-    // ITEM TESTE
     if (product_type === "shop") {
-      await sendRconCommand(`give ${player} minecraft:diamond 1`);
-      console.log(`Diamante entregue para ${player}`);
+      await sendRconCommand(
+        `give ${player} minecraft:diamond 1`
+      );
+      console.log(`💎 Diamante entregue para ${player}`);
     }
 
-    // VIP
     if (product_type === "vip") {
       db.get(
         "SELECT duration_days FROM vip_products WHERE id = ?",
         [product_id],
         async (err, vip) => {
-          if (vip) {
-            await sendRconCommand(
-              `lp user ${player} parent addtemp vip ${vip.duration_days}d`
-            );
-            console.log(`VIP aplicado para ${player}`);
-          }
+          if (err || !vip) return;
+
+          await sendRconCommand(
+            `lp user ${player} parent addtemp vip ${vip.duration_days}d`
+          );
+
+          console.log(`⭐ VIP aplicado para ${player}`);
         }
       );
     }
