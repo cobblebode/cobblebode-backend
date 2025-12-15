@@ -7,6 +7,12 @@ const { MercadoPagoConfig, Payment } = require("mercadopago");
 const { Rcon } = require("rcon-client");
 
 const app = express();
+
+app.get("/", (req, res) => {
+  res.send("Backend CobbleBode online 🚀");
+});
+
+
 const PORT = 3001;
 
 // ===============================
