@@ -13,7 +13,12 @@ const app = express();
 /* ===============================
    CONFIG BÁSICA
 =============================== */
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -30,7 +35,7 @@ app.get("/health", (req, res) => {
 const PORT = process.env.PORT || 10000;
 
 /* ===============================
-   BANCO SQLITE
+   SQLITE
 =============================== */
 const db = new sqlite3.Database("./db.sqlite", (err) => {
   if (err) {
@@ -41,10 +46,10 @@ const db = new sqlite3.Database("./db.sqlite", (err) => {
 });
 
 /* ===============================
-   MERCADO PAGO (PADRONIZADO)
+   MERCADO PAGO
 =============================== */
 const mpClient = new MercadoPagoConfig({
-  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
+  accessToken: process.env.MP_ACCESS_TOKEN,
 });
 
 /* ===============================
@@ -61,10 +66,10 @@ async function sendRconCommand(command) {
     const response = await rcon.send(command);
     await rcon.end();
 
-    console.log("🎮 RCON executado:", command);
+    console.log("RCON executado:", command);
     return response;
   } catch (error) {
-    console.error("❌ Erro RCON:", error);
+    console.error("Erro RCON:", error);
   }
 }
 
@@ -107,9 +112,9 @@ app.post("/api/payments/create", async (req, res) => {
         db.run(
           `
           INSERT INTO orders (player, product_type, product_id, status)
-          VALUES (?, ?, ?, ?)
+          VALUES (?, ?, ?, 'pending')
           `,
-          [playerName, productType, productId, "pending"],
+          [playerName, productType, productId],
           async function (err) {
             if (err) {
               console.error(err);
@@ -124,9 +129,7 @@ app.post("/api/payments/create", async (req, res) => {
                 transaction_amount: product.price,
                 description: product.name,
                 payment_method_id: "pix",
-                payer: {
-                  email: playerEmail,
-                },
+                payer: { email: playerEmail },
                 metadata: {
                   order_id: orderId,
                   player: playerName,
@@ -151,46 +154,29 @@ app.post("/api/payments/create", async (req, res) => {
       }
     );
   } catch (error) {
-    console.error("Erro ao criar pagamento:", error);
+    console.error("Erro ao criar pagamento PIX:", error);
     res.status(500).json({ error: "Erro ao criar pagamento PIX" });
   }
 });
 
 /* ===============================
-   WEBHOOK MERCADO PAGO (ROBUSTO)
+   WEBHOOK MERCADO PAGO
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
   try {
-    console.log("📩 Webhook recebido:", JSON.stringify(req.body, null, 2));
+    console.log("Webhook recebido:", req.body);
 
-    const paymentId =
-      req.body?.data?.id || req.body?.id;
-
-    if (!paymentId) {
-      console.log("⚠️ Webhook sem paymentId");
-      return res.sendStatus(200);
-    }
+    const paymentId = req.body?.data?.id;
+    if (!paymentId) return res.sendStatus(200);
 
     const payment = new Payment(mpClient);
     const mpPayment = await payment.get({ id: paymentId });
 
-    console.log("💰 Pagamento:", {
-      id: mpPayment.id,
-      status: mpPayment.status,
-      metadata: mpPayment.metadata,
-    });
+    console.log("Pagamento status:", mpPayment.status);
 
-    if (mpPayment.status !== "approved") {
-      return res.sendStatus(200);
-    }
+    if (mpPayment.status !== "approved") return res.sendStatus(200);
 
-    const { order_id, player, product_type, product_id } =
-      mpPayment.metadata || {};
-
-    if (!order_id || !player) {
-      console.error("❌ Metadata incompleta");
-      return res.sendStatus(200);
-    }
+    const { order_id, player, product_type, product_id } = mpPayment.metadata;
 
     db.run(
       "UPDATE orders SET status = 'approved' WHERE id = ?",
@@ -199,10 +185,8 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
 
     // ITEM TESTE
     if (product_type === "shop") {
-      await sendRconCommand(
-        `give ${player} minecraft:diamond 1`
-      );
-      console.log(`💎 Diamante entregue para ${player}`);
+      await sendRconCommand(`give ${player} minecraft:diamond 1`);
+      console.log(`Diamante entregue para ${player}`);
     }
 
     // VIP
@@ -211,20 +195,19 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
         "SELECT duration_days FROM vip_products WHERE id = ?",
         [product_id],
         async (err, vip) => {
-          if (err || !vip) return;
-
-          await sendRconCommand(
-            `lp user ${player} parent addtemp vip ${vip.duration_days}d`
-          );
-
-          console.log(`⭐ VIP aplicado para ${player}`);
+          if (vip) {
+            await sendRconCommand(
+              `lp user ${player} parent addtemp vip ${vip.duration_days}d`
+            );
+            console.log(`VIP aplicado para ${player}`);
+          }
         }
       );
     }
 
     res.sendStatus(200);
   } catch (error) {
-    console.error("❌ Erro no webhook:", error);
+    console.error("Erro no webhook:", error);
     res.sendStatus(500);
   }
 });
