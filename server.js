@@ -13,7 +13,7 @@ app.get("/", (req, res) => {
 });
 
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3000;
 
 // ===============================
 // MERCADO PAGO
@@ -246,5 +246,5 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
 
 // ===============================
 app.listen(PORT, () => {
-  console.log(`API rodando em http://localhost:${PORT}`);
+  console.log(`Backend CobbleBode rodando na porta ${PORT}`);
 });
