@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
+const axios = require("axios");
 
 const { MercadoPagoConfig, Payment } = require("mercadopago");
 const { Rcon } = require("rcon-client");
@@ -24,7 +25,7 @@ app.get("/health", (req, res) => {
 });
 
 /* ===============================
-   PORTA (RENDER)
+   PORTA
 =============================== */
 const PORT = process.env.PORT || 10000;
 
@@ -40,10 +41,10 @@ const db = new sqlite3.Database("./db.sqlite", (err) => {
 });
 
 /* ===============================
-   MERCADO PAGO
+   MERCADO PAGO (PADRONIZADO)
 =============================== */
 const mpClient = new MercadoPagoConfig({
-  accessToken: process.env.MP_ACCESS_TOKEN,
+  accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
 });
 
 /* ===============================
@@ -60,10 +61,10 @@ async function sendRconCommand(command) {
     const response = await rcon.send(command);
     await rcon.end();
 
-    console.log("RCON executado:", command);
+    console.log("🎮 RCON executado:", command);
     return response;
   } catch (error) {
-    console.error("Erro RCON:", error);
+    console.error("❌ Erro RCON:", error);
   }
 }
 
@@ -156,22 +157,24 @@ app.post("/api/payments/create", async (req, res) => {
 });
 
 /* ===============================
-   WEBHOOK MERCADO PAGO (FINAL)
+   WEBHOOK MERCADO PAGO (ROBUSTO)
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
   try {
-    console.log("Webhook recebido:", JSON.stringify(req.body, null, 2));
+    console.log("📩 Webhook recebido:", JSON.stringify(req.body, null, 2));
 
-    const paymentId = req.body?.data?.id;
+    const paymentId =
+      req.body?.data?.id || req.body?.id;
+
     if (!paymentId) {
-      console.log("Webhook sem paymentId");
+      console.log("⚠️ Webhook sem paymentId");
       return res.sendStatus(200);
     }
 
     const payment = new Payment(mpClient);
     const mpPayment = await payment.get({ id: paymentId });
 
-    console.log("Pagamento:", {
+    console.log("💰 Pagamento:", {
       id: mpPayment.id,
       status: mpPayment.status,
       metadata: mpPayment.metadata,
@@ -182,10 +185,10 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
     }
 
     const { order_id, player, product_type, product_id } =
-      mpPayment.metadata;
+      mpPayment.metadata || {};
 
     if (!order_id || !player) {
-      console.error("Metadata incompleta");
+      console.error("❌ Metadata incompleta");
       return res.sendStatus(200);
     }
 
@@ -194,12 +197,12 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
       [order_id]
     );
 
-    // ITEM DE TESTE (R$1)
+    // ITEM TESTE
     if (product_type === "shop") {
       await sendRconCommand(
         `give ${player} minecraft:diamond 1`
       );
-      console.log(`Diamante entregue para ${player}`);
+      console.log(`💎 Diamante entregue para ${player}`);
     }
 
     // VIP
@@ -214,14 +217,14 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             `lp user ${player} parent addtemp vip ${vip.duration_days}d`
           );
 
-          console.log(`VIP aplicado para ${player}`);
+          console.log(`⭐ VIP aplicado para ${player}`);
         }
       );
     }
 
     res.sendStatus(200);
   } catch (error) {
-    console.error("Erro no webhook:", error);
+    console.error("❌ Erro no webhook:", error);
     res.sendStatus(500);
   }
 });
