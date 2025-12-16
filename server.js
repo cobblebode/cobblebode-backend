@@ -40,6 +40,16 @@ const db = new sqlite3.Database("./db.sqlite", (err) => {
 });
 
 /* ===============================
+   ROTA PARA OBTER OS ITENS VIP
+=============================== */
+app.get("/api/vip", (req, res) => {
+  db.all("SELECT * FROM vip_products WHERE is_active = 1", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+/* ===============================
    MERCADO PAGO
 =============================== */
 const mpClient = new MercadoPagoConfig({
