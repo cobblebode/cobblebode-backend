@@ -3,9 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
-
 const { MercadoPagoConfig, Payment } = require("mercadopago");
-const { Rcon } = require("rcon-client");
 
 const app = express();
 
@@ -33,7 +31,7 @@ const PORT = process.env.PORT || 10000;
 =============================== */
 const db = new sqlite3.Database("./db.sqlite", (err) => {
   if (err) {
-    console.error("❌ Erro ao abrir SQLite:", err.message);
+    console.error("❌ Erro SQLite:", err.message);
   } else {
     console.log("✅ SQLite conectado");
   }
@@ -47,43 +45,31 @@ const mpClient = new MercadoPagoConfig({
 });
 
 /* ===============================
-   RCON
-=============================== */
-async function sendRconCommand(command) {
-  const rcon = await Rcon.connect({
-    host: process.env.RCON_HOST,
-    port: Number(process.env.RCON_PORT),
-    password: process.env.RCON_PASSWORD,
-  });
-
-  const response = await rcon.send(command);
-  await rcon.end();
-
-  console.log("🎮 RCON:", command);
-  return response;
-}
-
-/* ===============================
-   GIVE ITEM COM NOME CUSTOMIZADO
-=============================== */
-function buildGiveItemCommand(player, itemId, quantity, displayName) {
-  const customName = JSON.stringify({
-    text: displayName,
-    color: "gold",
-    bold: true,
-  });
-
-  return `give ${player} ${itemId}[minecraft:custom_name='${customName}'] ${quantity}`;
-}
-
-/* ===============================
    SHOP (PÚBLICO)
 =============================== */
 app.get("/api/shop", (req, res) => {
-  db.all("SELECT * FROM shop_items WHERE is_active = 1", [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+  db.all(
+    "SELECT * FROM shop_items WHERE is_active = 1",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
+
+/* ===============================
+   VIP (PÚBLICO)
+=============================== */
+app.get("/api/vip", (req, res) => {
+  db.all(
+    "SELECT * FROM vip_products WHERE is_active = 1",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
 });
 
 /* ===============================
@@ -114,7 +100,6 @@ app.post("/api/payments/create", (req, res) => {
           return res.status(500).json({ error: "Erro ao criar pedido" });
 
         const orderId = this.lastID;
-
         const payment = new Payment(mpClient);
 
         const mpResponse = await payment.create({
@@ -150,6 +135,7 @@ app.post("/api/payments/create", (req, res) => {
 
 /* ===============================
    WEBHOOK MERCADO PAGO
+   ⚠️ NÃO ENTREGA NADA
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
   try {
@@ -161,98 +147,15 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
 
     if (mpPayment.status !== "approved") return res.sendStatus(200);
 
-    const { order_id, player, product_type, product_id, quantity } =
-      mpPayment.metadata || {};
+    const { order_id } = mpPayment.metadata || {};
+    if (!order_id) return res.sendStatus(200);
 
-    if (!order_id || !player) return res.sendStatus(200);
-
-    db.get(
-      "SELECT delivered FROM orders WHERE id = ?",
-      [order_id],
-      async (err, row) => {
-        if (row?.delivered === 1) return res.sendStatus(200);
-
-        db.run(
-          "UPDATE orders SET status='approved', delivered=1 WHERE id = ?",
-          [order_id]
-        );
-
-        /* ===== SHOP ITEMS ===== */
-        if (product_type === "shop") {
-          let command = "";
-          let displayName = "";
-
-          if (product_id === 1) {
-            displayName = "Chave Lendária Gen 1-3";
-            command = buildGiveItemCommand(
-              player,
-              "cobblemontrainerbattle:elite_aaron_ticket",
-              quantity,
-              displayName
-            );
-          }
-
-          if (product_id === 2) {
-            displayName = "Chave Lendária Gen 4-5";
-            command = buildGiveItemCommand(
-              player,
-              "cobblemontrainerbattle:leader_volkner_ticket",
-              quantity,
-              displayName
-            );
-          }
-
-          if (product_id === 3) {
-            displayName = "Chave Lendária Gen 6-7";
-            command = buildGiveItemCommand(
-              player,
-              "cobblemontrainerbattle:gen_6_7_ticket",
-              quantity,
-              displayName
-            );
-          }
-
-          if (product_id === 4) {
-            displayName = "Chave Lendária Gen 8-9";
-            command = buildGiveItemCommand(
-              player,
-              "cobblemontrainerbattle:gen_8_9_ticket",
-              quantity,
-              displayName
-            );
-          }
-
-          if (command) {
-            await sendRconCommand(command);
-
-            await sendRconCommand(
-              `say §6✨ §e${player} §acomprou §6${quantity}x ${displayName} §ana loja! §6✨`
-            );
-          }
-        }
-
-        /* ===== VIP ===== */
-        if (product_type === "vip") {
-          db.get(
-            "SELECT duration_days, name FROM vip_products WHERE id = ?",
-            [product_id],
-            async (err, vip) => {
-              if (!vip) return;
-
-              await sendRconCommand(
-                `lp user ${player} parent addtemp vip ${vip.duration_days}d accumulate`
-              );
-
-              await sendRconCommand(
-                `say §6⭐ §e${player} §aativou §6VIP ${vip.name} §apela loja!`
-              );
-            }
-          );
-        }
-
-        return res.sendStatus(200);
-      }
+    db.run(
+      "UPDATE orders SET status='approved' WHERE id = ?",
+      [order_id]
     );
+
+    return res.sendStatus(200);
   } catch (e) {
     console.error("Webhook erro:", e.message);
     return res.sendStatus(200);
