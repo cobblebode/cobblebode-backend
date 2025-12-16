@@ -85,45 +85,7 @@ app.get("/api/shop", (req, res) => {
 });
 
 /* ===============================
-   SHOP (ADMIN)
-=============================== */
-app.get("/api/admin/shop", (req, res) => {
-  db.all(
-    "SELECT id, name, price, is_active FROM shop_items",
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("Erro ao listar shop_items:", err);
-        return res.status(500).json({ error: "Erro ao listar itens" });
-      }
-      res.json(rows);
-    }
-  );
-});
-
-app.post("/api/admin/shop/deactivate", (req, res) => {
-  const { id } = req.body;
-
-  if (!id) {
-    return res.status(400).json({ error: "ID não informado" });
-  }
-
-  db.run(
-    "UPDATE shop_items SET is_active = 0 WHERE id = ?",
-    [id],
-    function (err) {
-      if (err) {
-        console.error("Erro ao desativar item:", err);
-        return res.status(500).json({ error: "Erro ao desativar item" });
-      }
-
-      res.json({ success: true, updated: this.changes });
-    }
-  );
-});
-
-/* ===============================
-   VIP (PÚBLICO)  <<<<< FALTAVA ISSO
+   VIP (PÚBLICO)
 =============================== */
 app.get("/api/vip", (req, res) => {
   db.all(
@@ -140,49 +102,17 @@ app.get("/api/vip", (req, res) => {
 });
 
 /* ===============================
-   VIP (ADMIN)
-=============================== */
-app.get("/api/admin/vip", (req, res) => {
-  db.all(
-    "SELECT id, name, price, duration_days, is_active FROM vip_products",
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("Erro ao listar VIPs:", err.message);
-        return res.status(500).json({ error: "Erro ao listar VIPs" });
-      }
-      res.json(rows);
-    }
-  );
-});
-
-app.post("/api/admin/vip/deactivate", (req, res) => {
-  const { id } = req.body;
-
-  if (!id) {
-    return res.status(400).json({ error: "ID não informado" });
-  }
-
-  db.run(
-    "UPDATE vip_products SET is_active = 0 WHERE id = ?",
-    [id],
-    function (err) {
-      if (err) {
-        console.error("Erro ao desativar VIP:", err.message);
-        return res.status(500).json({ error: "Erro ao desativar VIP" });
-      }
-
-      res.json({ success: true, updated: this.changes });
-    }
-  );
-});
-
-/* ===============================
    CRIAR PAGAMENTO PIX
 =============================== */
 app.post("/api/payments/create", async (req, res) => {
   try {
-    const { productId, productType, playerName, playerEmail } = req.body;
+    const {
+      productId,
+      productType,
+      quantity = 1,
+      playerName,
+      playerEmail,
+    } = req.body;
 
     if (!productId || !productType || !playerName || !playerEmail) {
       return res.status(400).json({ error: "Dados incompletos" });
@@ -199,12 +129,20 @@ app.post("/api/payments/create", async (req, res) => {
           return res.status(404).json({ error: "Produto não encontrado" });
         }
 
+        const totalAmount = Number(product.price) * Number(quantity);
+
         db.run(
           `
-          INSERT INTO orders (player, product_type, product_id, status)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO orders (
+            player,
+            product_type,
+            product_id,
+            quantity,
+            status
+          )
+          VALUES (?, ?, ?, ?, ?)
           `,
-          [playerName, productType, productId, "pending"],
+          [playerName, productType, productId, quantity, "pending"],
           async function (err) {
             if (err) {
               console.error("Erro ao criar pedido:", err);
@@ -212,12 +150,11 @@ app.post("/api/payments/create", async (req, res) => {
             }
 
             const orderId = this.lastID;
-
             const payment = new Payment(mpClient);
 
             const mpResponse = await payment.create({
               body: {
-                transaction_amount: Number(product.price),
+                transaction_amount: totalAmount,
                 description: product.name,
                 payment_method_id: "pix",
                 payer: {
@@ -228,6 +165,7 @@ app.post("/api/payments/create", async (req, res) => {
                   player: playerName,
                   product_type: productType,
                   product_id: productId,
+                  quantity,
                 },
               },
             });
@@ -240,7 +178,7 @@ app.post("/api/payments/create", async (req, res) => {
                 mpResponse.point_of_interaction.transaction_data.qr_code_base64,
               qrCodeText:
                 mpResponse.point_of_interaction.transaction_data.qr_code,
-              amount: product.price,
+              amount: totalAmount,
             });
           }
         );
@@ -256,21 +194,12 @@ app.post("/api/payments/create", async (req, res) => {
    WEBHOOK MERCADO PAGO
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
-  console.log("🔔 Webhook Mercado Pago recebido:");
-  console.log(JSON.stringify(req.body, null, 2));
-
   try {
     const paymentId = req.body?.data?.id;
     if (!paymentId) return res.sendStatus(200);
 
     const payment = new Payment(mpClient);
-
-    let mpPayment;
-    try {
-      mpPayment = await payment.get({ id: paymentId });
-    } catch {
-      return res.sendStatus(200);
-    }
+    const mpPayment = await payment.get({ id: paymentId });
 
     if (mpPayment.status !== "approved") {
       return res.sendStatus(200);
@@ -281,27 +210,36 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
 
     if (!order_id || !player) return res.sendStatus(200);
 
-    db.run("UPDATE orders SET status = 'approved' WHERE id = ?", [order_id]);
+    db.get(
+      "SELECT quantity FROM orders WHERE id = ?",
+      [order_id],
+      async (err, order) => {
+        const qty = order?.quantity || 1;
 
-    if (product_type === "shop") {
-      await sendRconCommand(`give ${player} minecraft:diamond 1`);
-    }
+        db.run("UPDATE orders SET status = 'approved' WHERE id = ?", [order_id]);
 
-    if (product_type === "vip") {
-      db.get(
-        "SELECT duration_days FROM vip_products WHERE id = ?",
-        [product_id],
-        async (err, vip) => {
-          if (err || !vip) return;
-          await sendRconCommand(
-            `lp user ${player} parent addtemp vip ${vip.duration_days}d accumulate`
+        if (product_type === "shop") {
+          await sendRconCommand(`give ${player} minecraft:diamond ${qty}`);
+        }
+
+        if (product_type === "vip") {
+          db.get(
+            "SELECT duration_days FROM vip_products WHERE id = ?",
+            [product_id],
+            async (err, vip) => {
+              if (!vip) return;
+              await sendRconCommand(
+                `lp user ${player} parent addtemp vip ${vip.duration_days}d accumulate`
+              );
+            }
           );
         }
-      );
-    }
+      }
+    );
 
     return res.sendStatus(200);
-  } catch {
+  } catch (error) {
+    console.error("Erro webhook:", error);
     return res.sendStatus(200);
   }
 });
