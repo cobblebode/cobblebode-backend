@@ -85,6 +85,47 @@ app.get("/api/shop", (req, res) => {
 });
 
 /* ===============================
+   ADMIN - LISTAR ITENS DA SHOP
+=============================== */
+app.get("/api/admin/shop", (req, res) => {
+  db.all(
+    "SELECT id, name, price, is_active FROM shop_items",
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error("Erro ao listar shop_items:", err);
+        return res.status(500).json({ error: "Erro ao listar itens" });
+      }
+      res.json(rows);
+    }
+  );
+});
+
+/* ===============================
+   ADMIN - DESATIVAR ITEM
+=============================== */
+app.post("/api/admin/shop/deactivate", (req, res) => {
+  const { id } = req.body;
+
+  if (!id) {
+    return res.status(400).json({ error: "ID não informado" });
+  }
+
+  db.run(
+    "UPDATE shop_items SET is_active = 0 WHERE id = ?",
+    [id],
+    function (err) {
+      if (err) {
+        console.error("Erro ao desativar item:", err);
+        return res.status(500).json({ error: "Erro ao desativar item" });
+      }
+
+      res.json({ success: true, updated: this.changes });
+    }
+  );
+});
+
+/* ===============================
    CRIAR PAGAMENTO PIX
 =============================== */
 app.post("/api/payments/create", async (req, res) => {
