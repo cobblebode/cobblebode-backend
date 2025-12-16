@@ -68,7 +68,7 @@ async function sendRconCommand(command) {
 }
 
 /* ===============================
-   SHOP
+   SHOP (PÚBLICO)
 =============================== */
 app.get("/api/shop", (req, res) => {
   db.all(
@@ -85,7 +85,7 @@ app.get("/api/shop", (req, res) => {
 });
 
 /* ===============================
-   ADMIN - LISTAR ITENS DA SHOP
+   SHOP (ADMIN)
 =============================== */
 app.get("/api/admin/shop", (req, res) => {
   db.all(
@@ -101,9 +101,6 @@ app.get("/api/admin/shop", (req, res) => {
   );
 });
 
-/* ===============================
-   ADMIN - DESATIVAR ITEM
-=============================== */
 app.post("/api/admin/shop/deactivate", (req, res) => {
   const { id } = req.body;
 
@@ -118,6 +115,61 @@ app.post("/api/admin/shop/deactivate", (req, res) => {
       if (err) {
         console.error("Erro ao desativar item:", err);
         return res.status(500).json({ error: "Erro ao desativar item" });
+      }
+
+      res.json({ success: true, updated: this.changes });
+    }
+  );
+});
+
+/* ===============================
+   VIP (PÚBLICO)  <<<<< FALTAVA ISSO
+=============================== */
+app.get("/api/vip", (req, res) => {
+  db.all(
+    "SELECT * FROM vip_products WHERE is_active = 1",
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error("Erro ao buscar VIPs:", err.message);
+        return res.status(500).json({ error: "Erro ao buscar VIPs" });
+      }
+      res.json(rows);
+    }
+  );
+});
+
+/* ===============================
+   VIP (ADMIN)
+=============================== */
+app.get("/api/admin/vip", (req, res) => {
+  db.all(
+    "SELECT id, name, price, duration_days, is_active FROM vip_products",
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error("Erro ao listar VIPs:", err.message);
+        return res.status(500).json({ error: "Erro ao listar VIPs" });
+      }
+      res.json(rows);
+    }
+  );
+});
+
+app.post("/api/admin/vip/deactivate", (req, res) => {
+  const { id } = req.body;
+
+  if (!id) {
+    return res.status(400).json({ error: "ID não informado" });
+  }
+
+  db.run(
+    "UPDATE vip_products SET is_active = 0 WHERE id = ?",
+    [id],
+    function (err) {
+      if (err) {
+        console.error("Erro ao desativar VIP:", err.message);
+        return res.status(500).json({ error: "Erro ao desativar VIP" });
       }
 
       res.json({ success: true, updated: this.changes });
@@ -201,7 +253,7 @@ app.post("/api/payments/create", async (req, res) => {
 });
 
 /* ===============================
-   WEBHOOK MERCADO PAGO (FINAL / SEGURO)
+   WEBHOOK MERCADO PAGO
 =============================== */
 app.post("/api/webhook/mercadopago", async (req, res) => {
   console.log("🔔 Webhook Mercado Pago recebido:");
@@ -209,51 +261,30 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
 
   try {
     const paymentId = req.body?.data?.id;
-
-    if (!paymentId) {
-      console.log("⚠️ Webhook sem paymentId, ignorando");
-      return res.sendStatus(200);
-    }
+    if (!paymentId) return res.sendStatus(200);
 
     const payment = new Payment(mpClient);
 
     let mpPayment;
     try {
       mpPayment = await payment.get({ id: paymentId });
-    } catch (err) {
-      console.error("⚠️ Erro ao buscar pagamento no MP (simulação ou inválido):");
-      console.error(err.message);
-      // SEMPRE responder 200
+    } catch {
       return res.sendStatus(200);
     }
 
-    console.log("💰 Pagamento encontrado:", {
-      id: mpPayment.id,
-      status: mpPayment.status,
-      metadata: mpPayment.metadata,
-    });
-
     if (mpPayment.status !== "approved") {
-      console.log("⏳ Pagamento ainda não aprovado");
       return res.sendStatus(200);
     }
 
     const { order_id, player, product_type, product_id } =
       mpPayment.metadata || {};
 
-    if (!order_id || !player) {
-      console.error("❌ Metadata incompleta");
-      return res.sendStatus(200);
-    }
+    if (!order_id || !player) return res.sendStatus(200);
 
-    db.run(
-      "UPDATE orders SET status = 'approved' WHERE id = ?",
-      [order_id]
-    );
+    db.run("UPDATE orders SET status = 'approved' WHERE id = ?", [order_id]);
 
     if (product_type === "shop") {
       await sendRconCommand(`give ${player} minecraft:diamond 1`);
-      console.log(`💎 Diamante entregue para ${player}`);
     }
 
     if (product_type === "vip") {
@@ -262,19 +293,15 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
         [product_id],
         async (err, vip) => {
           if (err || !vip) return;
-
           await sendRconCommand(
-            `lp user ${player} parent addtemp vip ${vip.duration_days}d`
+            `lp user ${player} parent addtemp vip ${vip.duration_days}d accumulate`
           );
-
-          console.log(`⭐ VIP aplicado para ${player}`);
         }
       );
     }
 
     return res.sendStatus(200);
-  } catch (error) {
-    console.error("🔥 Erro inesperado no webhook:", error);
+  } catch {
     return res.sendStatus(200);
   }
 });
