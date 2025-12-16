@@ -8,9 +8,12 @@ pnpm-debug.log*
 .env
 .env.*
 
-# SQLite
+# SQLite (ignora tudo)
 *.sqlite
 *.db
+
+# EXCEÇÃO: banco DO BACKEND
+!db.sqlite
 
 # OS
 .DS_Store
