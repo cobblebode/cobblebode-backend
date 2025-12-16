@@ -216,7 +216,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             displayName = "Chave Lendária Gen 6-7";
             command = buildGiveItemCommand(
               player,
-              "cobblemontrainerbattle:gen_6_7_ticket",
+              "cobblemontrainerbattle:champion_cynthia_ticket",
               quantity,
               displayName
             );
@@ -226,7 +226,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             displayName = "Chave Lendária Gen 8-9";
             command = buildGiveItemCommand(
               player,
-              "cobblemontrainerbattle:gen_8_9_ticket",
+              "cobblemontrainerbattle:elite_bertha_ticket",
               quantity,
               displayName
             );
