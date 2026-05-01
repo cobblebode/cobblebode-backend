@@ -87,7 +87,24 @@ function buildGiveItemCommand(player, itemId, quantity, displayName) {
 }
 
 /* ===============================
-   SHOP (PÚBLICO)
+   VIP GROUP
+=============================== */
+function getVipGroup(vip) {
+  const name = String(vip.name || "").toLowerCase();
+
+  if (name.includes("vip1") || name.includes("ouro")) {
+    return "vip1";
+  }
+
+  if (name.includes("vip2") || name.includes("diamante")) {
+    return "vip2";
+  }
+
+  return null;
+}
+
+/* ===============================
+   SHOP PÚBLICO
 =============================== */
 app.get("/api/shop", (req, res) => {
   db.all("SELECT * FROM shop_items WHERE is_active = 1", [], (err, rows) => {
@@ -109,53 +126,65 @@ app.post("/api/payments/create", (req, res) => {
 
   const table = productType === "vip" ? "vip_products" : "shop_items";
 
-  db.get(`SELECT * FROM ${table} WHERE id = ?`, [productId], async (err, product) => {
-    if (err || !product)
-      return res.status(404).json({ error: "Produto não encontrado" });
-
-    db.run(
-      `
-      INSERT INTO orders (player, product_type, product_id, quantity, status, delivered)
-      VALUES (?, ?, ?, ?, 'pending', 0)
-      `,
-      [playerName, productType, productId, quantity],
-      async function (err) {
-        if (err)
-          return res.status(500).json({ error: "Erro ao criar pedido" });
-
-        const orderId = this.lastID;
-
-        const payment = new Payment(mpClient);
-
-        const mpResponse = await payment.create({
-          body: {
-            transaction_amount: Number(product.price) * quantity,
-            description: `${product.name} x${quantity}`,
-            payment_method_id: "pix",
-            payer: { email: playerEmail },
-            metadata: {
-              order_id: orderId,
-              player: playerName,
-              product_type: productType,
-              product_id: productId,
-              quantity,
-            },
-          },
-        });
-
-        res.json({
-          orderId,
-          paymentId: mpResponse.id,
-          status: mpResponse.status,
-          qrCode:
-            mpResponse.point_of_interaction.transaction_data.qr_code_base64,
-          qrCodeText:
-            mpResponse.point_of_interaction.transaction_data.qr_code,
-          amount: Number(product.price) * quantity,
-        });
+  db.get(
+    `SELECT * FROM ${table} WHERE id = ?`,
+    [productId],
+    async (err, product) => {
+      if (err || !product) {
+        return res.status(404).json({ error: "Produto não encontrado" });
       }
-    );
-  });
+
+      db.run(
+        `
+        INSERT INTO orders 
+        (player, product_type, product_id, quantity, status, delivered)
+        VALUES (?, ?, ?, ?, 'pending', 0)
+        `,
+        [playerName, productType, productId, quantity],
+        async function (err) {
+          if (err) {
+            return res.status(500).json({ error: "Erro ao criar pedido" });
+          }
+
+          const orderId = this.lastID;
+
+          try {
+            const payment = new Payment(mpClient);
+
+            const mpResponse = await payment.create({
+              body: {
+                transaction_amount: Number(product.price) * quantity,
+                description: `${product.name} x${quantity}`,
+                payment_method_id: "pix",
+                payer: { email: playerEmail },
+                metadata: {
+                  order_id: orderId,
+                  player: playerName,
+                  product_type: productType,
+                  product_id: productId,
+                  quantity,
+                },
+              },
+            });
+
+            res.json({
+              orderId,
+              paymentId: mpResponse.id,
+              status: mpResponse.status,
+              qrCode:
+                mpResponse.point_of_interaction.transaction_data.qr_code_base64,
+              qrCodeText:
+                mpResponse.point_of_interaction.transaction_data.qr_code,
+              amount: Number(product.price) * quantity,
+            });
+          } catch (e) {
+            console.error("Erro ao criar pagamento:", e.message);
+            return res.status(500).json({ error: "Erro ao criar pagamento" });
+          }
+        }
+      );
+    }
+  );
 });
 
 /* ===============================
@@ -183,7 +212,6 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 🔒 trava forte anti-duplicação
     db.get(
       "SELECT delivered FROM orders WHERE id = ?",
       [order_id],
@@ -191,7 +219,6 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
         if (err || !row) return res.sendStatus(200);
         if (row.delivered === 1) return res.sendStatus(200);
 
-        // marca como entregue ANTES de entregar
         db.run(
           "UPDATE orders SET status='approved', delivered=1 WHERE id = ?",
           [order_id]
@@ -202,7 +229,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
           let command = "";
           let displayName = "";
 
-          if (product_id === 1) {
+          if (Number(product_id) === 1) {
             displayName = "Chave Lendária Gen 1-3";
             command = buildGiveItemCommand(
               player,
@@ -212,7 +239,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             );
           }
 
-          if (product_id === 2) {
+          if (Number(product_id) === 2) {
             displayName = "Chave Lendária Gen 4-5";
             command = buildGiveItemCommand(
               player,
@@ -222,7 +249,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             );
           }
 
-          if (product_id === 3) {
+          if (Number(product_id) === 3) {
             displayName = "Chave Lendária Gen 6-7";
             command = buildGiveItemCommand(
               player,
@@ -232,7 +259,7 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             );
           }
 
-          if (product_id === 4) {
+          if (Number(product_id) === 4) {
             displayName = "Chave Lendária Gen 8-9";
             command = buildGiveItemCommand(
               player,
@@ -256,14 +283,24 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
             "SELECT duration_days, name FROM vip_products WHERE id = ?",
             [product_id],
             async (err, vip) => {
-              if (!vip) return;
+              if (err || !vip) {
+                console.error("❌ VIP não encontrado:", product_id);
+                return;
+              }
+
+              const vipGroup = getVipGroup(vip);
+
+              if (!vipGroup) {
+                console.error("❌ Grupo VIP inválido:", vip.name);
+                return;
+              }
 
               await sendRconCommand(
-                `lp user ${player} parent addtemp vip ${vip.duration_days}d accumulate`
+                `lp user ${player} parent addtemp ${vipGroup} ${vip.duration_days}d accumulate`
               );
 
               await sendRconCommand(
-                `say §6⭐ §e${player} §aativou §6VIP ${vip.name} §apela loja!`
+                `say §6⭐ §e${player} §aativou §6${vip.name} §apela loja!`
               );
             }
           );
