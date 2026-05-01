@@ -9,6 +9,13 @@ const { Rcon } = require("rcon-client");
 
 const app = express();
 
+app.get("/debug/vips", (req, res) => {
+  db.all("SELECT * FROM vip_products", [], (err, rows) => {
+    res.json(rows);
+  });
+});
+
+
 /* ===============================
    CONFIG BÁSICA
 =============================== */
