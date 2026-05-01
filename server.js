@@ -321,7 +321,14 @@ app.post("/api/webhook/mercadopago", async (req, res) => {
     return res.sendStatus(200);
   }
 });
-
+/* ===============================
+   DEBUG / FIX VIP
+=============================== */
+app.get("/fix/vip", (req, res) => {
+  db.run(`UPDATE vip_products SET name = 'vip1' WHERE id = 1`);
+  db.run(`UPDATE vip_products SET name = 'vip2' WHERE id = 2`);
+  res.send("VIPs corrigidos");
+});
 /* ===============================
    START
 =============================== */
